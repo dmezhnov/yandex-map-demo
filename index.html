@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Маршрут А–Б</title>
+<script src="https://api-maps.yandex.ru/v3/?apikey=fba39595-0dd1-4500-87dd-9a7986eead9c&lang=ru_RU"></script>
+<style>
+  html, body, #map { margin: 0; width: 100%; height: 100%; font: 14px/1.3 system-ui, sans-serif; }
+  .pin { transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; }
+  .pin b { background: #e53935; color: #fff; border-radius: 12px; padding: 2px 8px; white-space: nowrap; box-shadow: 0 1px 4px #0006; }
+  .pin.b b { background: #1e88e5; }
+  .pin i { width: 2px; height: 10px; background: #333; }
+  #msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 16px; text-align: center; color: #555; background: #f5f5f5; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="msg"></div>
+<script>
+// Interactive Yandex map (JS API v3) for the MyBPM card: ?a=<lat>,<lon>&b=<lat>,<lon> → markers А and Б.
+const q = new URLSearchParams(location.search);
+const pt = s => { const m = (s || "").split(",").map(Number); return m.length === 2 && m.every(Number.isFinite) ? [m[1], m[0]] : null; };
+const points = [["А", pt(q.get("a")), "a"], ["Б", pt(q.get("b")), "b"]].filter(p => p[1]);
+const say = t => { const m = document.getElementById("msg"); m.textContent = t; m.style.display = "flex"; };
+
+(async () => {
+  if (typeof ymaps3 === "undefined") return say("JS API не загрузился: ключ отклонён или нет сети.");
+  await ymaps3.ready;
+  const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
+  const lons = points.map(p => p[1][0]), lats = points.map(p => p[1][1]);
+  const location = points.length > 1
+    ? { bounds: [[Math.min(...lons), Math.max(...lats)], [Math.max(...lons), Math.min(...lats)]] }
+    : { center: points[0]?.[1] ?? [76.9286, 43.2567], zoom: points.length ? 15 : 11 };
+  const map = new YMap(document.getElementById("map"), { location, margin: [60, 60, 60, 60] });
+  map.addChild(new YMapDefaultSchemeLayer());
+  map.addChild(new YMapDefaultFeaturesLayer());
+  if (points.length > 1) map.addChild(new YMapFeature({
+    geometry: { type: "LineString", coordinates: points.map(p => p[1]) },
+    style: { stroke: [{ color: "#3949ab", width: 3, dash: [8, 6] }] },
+  }));
+  for (const [label, coords, cls] of points) {
+    const el = document.createElement("div");
+    el.className = "pin " + cls;
+    el.innerHTML = "<b>" + label + "</b><i></i>";
+    map.addChild(new YMapMarker({ coordinates: coords }, el));
+  }
+  if (!points.length) say("Нет координат: нажмите «Найти координаты» на вкладке «Геокодер», затем «Показать карту».");
+})().catch(e => say("Ошибка JS API: " + e.message));
+</script>
+</body>
+</html>
