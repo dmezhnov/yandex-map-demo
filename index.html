@@ -98,7 +98,7 @@ const say = t => { const m = document.getElementById("msg"); m.textContent = t; 
   }));
   if (road) map.addChild(new YMapFeature({
     geometry: { type: "LineString", coordinates: road.line },
-    style: { stroke: [{ color: "#fff", width: 8 }, { color: "#1e88e5", width: 5 }] },
+    style: { stroke: [{ color: "#1e88e5", width: 5 }, { color: "#fff", width: 8 }] },
   }));
   else if (points.length > 1) map.addChild(new YMapFeature({
     geometry: { type: "LineString", coordinates: points.map(p => p[1]) },
