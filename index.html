@@ -13,18 +13,24 @@
   .pin.n b { background: #43a047; }
   .pin.out b { background: #757575; text-decoration: line-through; }
   .pin i { width: 2px; height: 10px; background: #333; }
+  #info { position: absolute; top: 12px; left: 12px; display: none; background: #fff; border-radius: 8px; padding: 8px 12px; box-shadow: 0 1px 6px #0004; }
+  #info b { font-size: 16px; }
   #msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 16px; text-align: center; color: #555; background: #f5f5f5; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="info"></div>
 <div id="msg"></div>
 <script>
 // Interactive Yandex map (JS API v3) for the MyBPM card.
 //   ?p=<номер>:<lat>,<lon>;<номер>:<lat>,<lon>;…  → any number of numbered markers, joined in the given order;
 //   ?a=<lat>,<lon>&b=<lat>,<lon>                → the old two-marker form (А and Б), still accepted;
 //   &z=<lat>,<lon>;<lat>,<lon>;…                → a service zone polygon (vertices in order, ≥3); markers outside it
-//                                                  turn grey and crossed out.
+//                                                  turn grey and crossed out;
+//   &r=<Router API key>                         → the road route through the points (Router API /v2/route, driving,
+//                                                  the given order) with its length and time; without it the points
+//                                                  are joined by a dashed straight line.
 const q = new URLSearchParams(location.search);
 const pt = s => { const m = (s || "").split(",").map(Number); return m.length === 2 && m.every(Number.isFinite) ? [m[1], m[0]] : null; };
 // a MyBPM number may arrive as "1.000" or "1E+1" (BigDecimal.toString) — print it as a plain number
@@ -47,13 +53,38 @@ const inZone = ([x, y]) => {
   return inside;
 };
 if (zone.length >= 3) for (const p of points) if (!inZone(p[1])) p[2] = "out";
+// the box shows the route time (bold) and length, or an error — always as text, never through innerHTML
+const info = (head, tail = "") => {
+  const m = document.getElementById("info"), h = document.createElement("b");
+  h.textContent = head; m.replaceChildren(h);
+  if (tail) m.append(document.createElement("br"), tail);
+  m.style.display = "block";
+};
+// Router API: one call for all points; every step carries polyline.points as [lat, lon]
+const route = async key => {
+  const wps = points.map(p => p[1][1] + "," + p[1][0]).join("|");
+  const res = await fetch("https://api.routing.yandex.net/v2/route?mode=driving&apikey=" + encodeURIComponent(key) +
+    "&waypoints=" + encodeURIComponent(wps));
+  if (!res.ok) throw new Error("Router API: HTTP " + res.status);
+  const line = []; let m = 0, s = 0;
+  for (const leg of (await res.json()).route?.legs ?? []) for (const st of leg.steps ?? []) {
+    m += st.length || 0; s += st.duration || 0;
+    for (const [lat, lon] of st.polyline?.points ?? []) line.push([lon, lat]);
+  }
+  if (line.length < 2) throw new Error("Router API: маршрут не найден");
+  return { line, km: (m / 1000).toFixed(1).replace(".", ","), min: Math.round(s / 60) };
+};
 const say = t => { const m = document.getElementById("msg"); m.textContent = t; m.style.display = "flex"; };
 
 (async () => {
   if (typeof ymaps3 === "undefined") return say("JS API не загрузился: ключ отклонён или нет сети.");
   await ymaps3.ready;
+  const key = q.get("r");
+  let road = null;
+  if (key && points.length > 1) road = await route(key).catch(e => (info(e.message), null));
+  if (road) info(road.min + " мин", road.km + " км");
   const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
-  const all = [...points.map(p => p[1]), ...(zone.length >= 3 ? zone : [])];
+  const all = [...points.map(p => p[1]), ...(zone.length >= 3 ? zone : []), ...(road?.line ?? [])];
   const lons = all.map(c => c[0]), lats = all.map(c => c[1]);
   const location = all.length > 1
     ? { bounds: [[Math.min(...lons), Math.max(...lats)], [Math.max(...lons), Math.min(...lats)]] }
@@ -65,7 +96,11 @@ const say = t => { const m = document.getElementById("msg"); m.textContent = t; 
     geometry: { type: "Polygon", coordinates: [[...zone, zone[0]]] },
     style: { fill: "rgba(67, 160, 71, 0.15)", stroke: [{ color: "#43a047", width: 2 }] },
   }));
-  if (points.length > 1) map.addChild(new YMapFeature({
+  if (road) map.addChild(new YMapFeature({
+    geometry: { type: "LineString", coordinates: road.line },
+    style: { stroke: [{ color: "#fff", width: 8 }, { color: "#1e88e5", width: 5 }] },
+  }));
+  else if (points.length > 1) map.addChild(new YMapFeature({
     geometry: { type: "LineString", coordinates: points.map(p => p[1]) },
     style: { stroke: [{ color: "#3949ab", width: 3, dash: [8, 6] }] },
   }));
