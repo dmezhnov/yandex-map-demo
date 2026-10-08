@@ -11,6 +11,7 @@
   .pin b { background: #e53935; color: #fff; border-radius: 12px; padding: 2px 8px; white-space: nowrap; box-shadow: 0 1px 4px #0006; }
   .pin.b b { background: #1e88e5; }
   .pin.n b { background: #43a047; }
+  .pin.out b { background: #757575; text-decoration: line-through; }
   .pin i { width: 2px; height: 10px; background: #333; }
   #msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 16px; text-align: center; color: #555; background: #f5f5f5; }
 </style>
@@ -21,7 +22,9 @@
 <script>
 // Interactive Yandex map (JS API v3) for the MyBPM card.
 //   ?p=<номер>:<lat>,<lon>;<номер>:<lat>,<lon>;…  → any number of numbered markers, joined in the given order;
-//   ?a=<lat>,<lon>&b=<lat>,<lon>                → the old two-marker form (А and Б), still accepted.
+//   ?a=<lat>,<lon>&b=<lat>,<lon>                → the old two-marker form (А and Б), still accepted;
+//   &z=<lat>,<lon>;<lat>,<lon>;…                → a service zone polygon (vertices in order, ≥3); markers outside it
+//                                                  turn grey and crossed out.
 const q = new URLSearchParams(location.search);
 const pt = s => { const m = (s || "").split(",").map(Number); return m.length === 2 && m.every(Number.isFinite) ? [m[1], m[0]] : null; };
 // a MyBPM number may arrive as "1.000" or "1E+1" (BigDecimal.toString) — print it as a plain number
@@ -33,19 +36,35 @@ const list = (q.get("p") || "").split(";").filter(Boolean).map(x => {
 const points = list.length
   ? list.map(([n, c], i) => [n ?? String(i + 1), c, i === 0 ? "a" : i === list.length - 1 ? "b" : "n"])
   : [["А", pt(q.get("a")), "a"], ["Б", pt(q.get("b")), "b"]].filter(p => p[1]);
+const zone = (q.get("z") || "").split(";").map(pt).filter(Boolean);
+// ray casting over [lon, lat] pairs, the same rule as the MyBPM routing script
+const inZone = ([x, y]) => {
+  let inside = false;
+  for (let i = 0, j = zone.length - 1; i < zone.length; j = i++) {
+    const [xi, yi] = zone[i], [xj, yj] = zone[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+if (zone.length >= 3) for (const p of points) if (!inZone(p[1])) p[2] = "out";
 const say = t => { const m = document.getElementById("msg"); m.textContent = t; m.style.display = "flex"; };
 
 (async () => {
   if (typeof ymaps3 === "undefined") return say("JS API не загрузился: ключ отклонён или нет сети.");
   await ymaps3.ready;
   const { YMap, YMapDefaultSchemeLayer, YMapDefaultFeaturesLayer, YMapMarker, YMapFeature } = ymaps3;
-  const lons = points.map(p => p[1][0]), lats = points.map(p => p[1][1]);
-  const location = points.length > 1
+  const all = [...points.map(p => p[1]), ...(zone.length >= 3 ? zone : [])];
+  const lons = all.map(c => c[0]), lats = all.map(c => c[1]);
+  const location = all.length > 1
     ? { bounds: [[Math.min(...lons), Math.max(...lats)], [Math.max(...lons), Math.min(...lats)]] }
     : { center: points[0]?.[1] ?? [76.9286, 43.2567], zoom: points.length ? 15 : 11 };
   const map = new YMap(document.getElementById("map"), { location, margin: [60, 60, 60, 60] });
   map.addChild(new YMapDefaultSchemeLayer());
   map.addChild(new YMapDefaultFeaturesLayer());
+  if (zone.length >= 3) map.addChild(new YMapFeature({
+    geometry: { type: "Polygon", coordinates: [[...zone, zone[0]]] },
+    style: { fill: "rgba(67, 160, 71, 0.15)", stroke: [{ color: "#43a047", width: 2 }] },
+  }));
   if (points.length > 1) map.addChild(new YMapFeature({
     geometry: { type: "LineString", coordinates: points.map(p => p[1]) },
     style: { stroke: [{ color: "#3949ab", width: 3, dash: [8, 6] }] },
